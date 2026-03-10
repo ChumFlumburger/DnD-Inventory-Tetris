@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The North — Viking Inventory</title>
+<link href="https://fonts.googleapis.com/css2?family=Uncial+Antiqua&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #080c12;
+    --surface: #0e1520;
+    --surface2: #131d2a;
+    --surface3: #192333;
+    --border: #243346;
+    --border-bright: #3a5070;
+    --ice: #a8d4f0;
+    --ice-bright: #d4ecff;
+    --ice-dim: #3a6080;
+    --frost: #6baed4;
+    --snow: #e8f4fc;
+    --text: #cde4f5;
+    --text-dim: #7aa0bc;
+    --text-faint: #3a5870;
+    --red: #c0392b;
+    --green: #1a8a5a;
+    --rune-gold: #c8a84a;
+    --cell: 52px;
+    --gap: 2px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  @keyframes drift {
+    0%   { transform: translateY(0)   translateX(0)   rotate(0deg);   opacity: 0; }
+    10%  { opacity: 0.7; }
+    90%  { opacity: 0.5; }
+    100% { transform: translateY(100vh) translateX(40px) rotate(360deg); opacity: 0; }
+  }
+
+  @keyframes shimmer {
+    0%, 100% { opacity: 0.4; }
+    50%       { opacity: 0.9; }
+  }
+
+  @keyframes frost-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IM Fell English', Georgia, serif;
+    font-size: 16px;
+    min-height: 100vh;
+    overflow-x: hidden;
+    cursor: default;
+  }
+
+  /* Animated aurora background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 15% 10%, rgba(50,120,200,0.07) 0%, transparent 45%),
+      radial-gradient(ellipse at 85% 90%, rgba(30,80,160,0.06) 0%, transparent 45%),
+      radial-gradient(ellipse at 50% 50%, rgba(10,30,60,0.9) 0%, transparent 80%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Snowflake canvas overlay */
+  #snow-canvas {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.5;
+  }
+
+  /* ─── SCREENS ─── */
+  #lobby-screen, #game-screen {
+    position: relative;
+    z-index: 1;
+  }
+  #game-screen { display: none; }
+
+  /* ─── LOBBY ─── */
+  #lobby-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  .lobby-card {
+    background: linear-gradient(170deg, #0f1c2e 0%, #0a1220 100%);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 440px;
+    position: relative;
+    box-shadow:
+      0 0 60px rgba(0,0,0,0.9),
+      0 0 30px rgba(50,120,200,0.08),
+      inset 0 1px 0 rgba(168,212,240,0.08);
+    animation: frost-in 0.5s ease both;
+  }
+
+  /* Knotwork top border */
+  .lobby-card::before {
+    content: '❄  ᚦ  ᚢ  ᚾ  ᛞ  ᚱ  ❄';
+    position: absolute;
+    top: -0.8rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    padding: 0 0.8rem;
+    font-size: 0.8rem;
+    color: var(--ice-dim);
+    letter-spacing: 0.3em;
+    white-space: nowrap;
+  }
+
+  .lobby-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ice-dim), var(--ice), var(--ice-dim), transparent);
+  }
+
+  /* Corner rune marks */
+  .rune-corner {
+    position: absolute;
+    color: var(--ice-dim);
+    font-size: 0.9rem;
+    opacity: 0.5;
+  }
+  .rune-corner.tl { top: 0.4rem; left: 0.5rem; }
+  .rune-corner.tr { top: 0.4rem; right: 0.5rem; }
+  .rune-corner.bl { bottom: 0.4rem; left: 0.5rem; }
+  .rune-corner.br { bottom: 0.4rem; right: 0.5rem; }
+
+  .lobby-title {
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 2.4rem;
+    font-weight: 400;
+    color: var(--ice-bright);
+    text-align: center;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.2rem;
+    text-shadow: 0 0 30px rgba(168,212,240,0.4), 0 0 60px rgba(100,180,240,0.15);
+  }
+
+  .lobby-subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    font-style: italic;
+    margin-bottom: 2rem;
+    font-size: 0.92rem;
+    letter-spacing: 0.04em;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin: 1.5rem 0;
+    color: var(--text-faint);
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border-bright), transparent);
+  }
+
+  label {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 0.4rem;
+    font-family: 'Uncial Antiqua', serif;
+    font-style: normal;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    background: rgba(8,12,18,0.8);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--snow);
+    font-family: 'IM Fell English', serif;
+    font-size: 1rem;
+    padding: 0.6rem 0.8rem;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    margin-bottom: 1rem;
+  }
+  input[type="text"]:focus {
+    border-color: var(--ice-dim);
+    box-shadow: 0 0 0 2px rgba(107,174,212,0.08), inset 0 0 8px rgba(107,174,212,0.04);
+  }
+  input[type="text"]::placeholder { color: var(--text-faint); }
+
+  .btn {
+    width: 100%;
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: linear-gradient(180deg, #162436 0%, #0d1822 100%);
+    border-color: var(--ice-dim);
+    color: var(--ice);
+  }
+  .btn-primary:hover {
+    background: linear-gradient(180deg, #1e3248 0%, #152030 100%);
+    border-color: var(--ice);
+    color: var(--ice-bright);
+    box-shadow: 0 0 16px rgba(107,174,212,0.2), inset 0 1px 0 rgba(168,212,240,0.1);
+  }
+
+  .btn-secondary {
+    background: var(--surface2);
+    border-color: var(--border);
+    color: var(--text-dim);
+    margin-top: 0.6rem;
+  }
+  .btn-secondary:hover {
+    border-color: var(--border-bright);
+    color: var(--text);
+  }
+
+  .error-msg {
+    color: #e06c5a;
+    font-size: 0.85rem;
+    text-align: center;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+    font-style: italic;
+  }
+
+  .server-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    align-items: flex-end;
+  }
+  .server-row input { flex: 1; margin-bottom: 0; }
+  .server-row .btn-sm {
+    padding: 0.6rem 0.8rem;
+    font-size: 0.7rem;
+    white-space: nowrap;
+    width: auto;
+    flex-shrink: 0;
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.05em;
+    border-radius: 2px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .server-row .btn-sm:hover { border-color: var(--ice-dim); color: var(--ice); }
+
+  /* ─── GAME LAYOUT ─── */
+  #game-screen {
+    display: none;
+    min-height: 100vh;
+    flex-direction: column;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 1.2rem;
+    background: linear-gradient(180deg, #0c1828 0%, #08101c 100%);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+
+  .topbar::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ice-dim), transparent);
+    opacity: 0.4;
+  }
+
+  .topbar-left { display: flex; align-items: center; gap: 1rem; }
+
+  .game-title {
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 1.15rem;
+    color: var(--ice);
+    letter-spacing: 0.06em;
+    text-shadow: 0 0 20px rgba(107,174,212,0.3);
+  }
+
+  .campaign-badge {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.1em;
+  }
+  .campaign-badge span { color: var(--ice); font-weight: 400; }
+
+  .topbar-right { display: flex; align-items: center; gap: 0.8rem; }
+
+  .dm-badge {
+    background: rgba(107,174,212,0.1);
+    border: 1px solid var(--ice-dim);
+    border-radius: 2px;
+    padding: 0.18rem 0.6rem;
+    font-size: 0.7rem;
+    color: var(--ice);
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.1em;
+    text-shadow: 0 0 10px rgba(107,174,212,0.3);
+  }
+
+  .player-name-tag { font-size: 0.85rem; color: var(--text-dim); font-style: italic; }
+
+  /* ─── MAIN CONTENT ─── */
+  .main-content {
+    display: grid;
+    grid-template-columns: 220px 1fr 240px;
+    flex: 1;
+    min-height: calc(100vh - 46px);
+  }
+
+  /* ─── LEFT PANEL ─── */
+  .left-panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
+  }
+
+  .players-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+
+  .player-tab {
+    padding: 0.55rem 0.8rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    border: 1px solid transparent;
+    margin-bottom: 0.3rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .player-tab:hover { background: var(--surface2); }
+  .player-tab.active {
+    background: var(--surface3);
+    border-color: var(--border);
+  }
+  .player-tab.active .player-dot { background: var(--ice); box-shadow: 0 0 6px rgba(107,174,212,0.5); }
+
+  .player-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+  }
+  .player-tab-name { font-size: 0.9rem; color: var(--text); flex: 1; font-style: italic; }
+  .player-tab-dm {
+    font-size: 0.62rem;
+    color: var(--ice-dim);
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.06em;
+  }
+
+  .player-tab-actions { display: flex; gap: 0.3rem; margin-left: auto; }
+  .btn-promote, .btn-demote {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    font-size: 0.62rem;
+    padding: 0.1rem 0.35rem;
+    cursor: pointer;
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.04em;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-promote { color: var(--ice-dim); }
+  .btn-promote:hover { color: var(--ice); border-color: var(--ice-dim); background: rgba(107,174,212,0.08); }
+  .btn-demote { color: var(--text-faint); }
+  .btn-demote:hover { color: #e06c5a; border-color: rgba(192,57,43,0.4); background: rgba(192,57,43,0.08); }
+
+  /* ─── CENTER PANEL ─── */
+  .center-panel {
+    padding: 1.2rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .inventory-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .inventory-owner {
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 1.05rem;
+    color: var(--ice);
+    text-shadow: 0 0 16px rgba(107,174,212,0.25);
+  }
+
+  .inventory-stats { font-size: 0.8rem; color: var(--text-faint); font-style: italic; }
+
+  /* ─── GRID ─── */
+  .grid-wrapper {
+    background: linear-gradient(160deg, #0a1420 0%, #060e18 100%);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1rem;
+    display: inline-block;
+    position: relative;
+    box-shadow: inset 0 2px 12px rgba(0,0,0,0.6), 0 0 20px rgba(0,0,0,0.3);
+  }
+
+  /* Frost corner decorations */
+  .grid-wrapper::before {
+    content: '✦';
+    position: absolute;
+    top: 0.35rem; left: 0.5rem;
+    color: var(--ice-dim);
+    font-size: 0.7rem;
+    opacity: 0.4;
+  }
+  .grid-wrapper::after {
+    content: '✦';
+    position: absolute;
+    bottom: 0.35rem; right: 0.5rem;
+    color: var(--ice-dim);
+    font-size: 0.7rem;
+    opacity: 0.4;
+  }
+
+  .inv-grid {
+    display: grid;
+    grid-template-columns: repeat(10, var(--cell));
+    grid-template-rows: repeat(8, var(--cell));
+    gap: var(--gap);
+    position: relative;
+  }
+
+  .grid-cell {
+    width: var(--cell); height: var(--cell);
+    background: rgba(8,16,28,0.8);
+    border: 1px solid rgba(36,51,70,0.8);
+    border-radius: 1px;
+    position: relative;
+    transition: background 0.1s, border-color 0.1s;
+  }
+
+  /* Subtle crosshatch pattern on cells */
+  .grid-cell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 8px,
+      rgba(36,51,70,0.15) 8px,
+      rgba(36,51,70,0.15) 9px
+    );
+    pointer-events: none;
+  }
+
+  .grid-cell.drag-over {
+    background: rgba(107,174,212,0.12);
+    border-color: var(--ice-dim);
+    box-shadow: inset 0 0 8px rgba(107,174,212,0.1);
+  }
+  .grid-cell.drag-over-invalid {
+    background: rgba(192,57,43,0.12);
+    border-color: rgba(192,57,43,0.4);
+  }
+
+  /* ─── ITEMS ─── */
+  .inv-item {
+    position: absolute;
+    cursor: grab;
+    border-radius: 2px;
+    border: 1px solid rgba(107,174,212,0.15);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    transition: box-shadow 0.15s, transform 0.1s;
+    overflow: hidden;
+    z-index: 10;
+  }
+
+  .inv-item::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(168,212,240,0.2), transparent);
+  }
+
+  .inv-item:hover {
+    z-index: 20;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.7), 0 0 12px rgba(107,174,212,0.12);
+    transform: translateY(-1px);
+  }
+  .inv-item.dragging { opacity: 0.4; cursor: grabbing; }
+
+  .item-icon { font-size: 1.35em; line-height: 1; }
+  .item-label {
+    font-size: 0.56rem;
+    color: rgba(205,228,245,0.75);
+    text-align: center;
+    padding: 0 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+  }
+  .item-rarity-gem {
+    position: absolute;
+    top: 2px; right: 2px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+  }
+
+  /* ─── ITEM LIST ─── */
+  .items-list { display: flex; flex-direction: column; gap: 0.35rem; }
+
+  .item-list-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.45rem 0.7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    transition: border-color 0.15s;
+    cursor: pointer;
+  }
+  .item-list-row:hover { border-color: var(--border-bright); }
+  .item-list-icon { font-size: 1.1rem; }
+  .item-list-name { flex: 1; font-size: 0.9rem; font-style: italic; }
+  .item-list-type { font-size: 0.73rem; color: var(--text-faint); font-style: italic; }
+  .item-list-remove {
+    background: none; border: none;
+    color: var(--text-faint);
+    cursor: pointer; font-size: 0.85rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 2px;
+    transition: color 0.15s, background 0.15s;
+  }
+  .item-list-remove:hover { color: #e06c5a; background: rgba(192,57,43,0.1); }
+
+  /* ─── RIGHT PANEL ─── */
+  .right-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .right-panel .panel-header { flex-shrink: 0; }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .panel-tab {
+    flex: 1;
+    padding: 0.5rem;
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    border-bottom: 2px solid transparent;
+  }
+  .panel-tab.active {
+    color: var(--ice);
+    border-bottom-color: var(--ice-dim);
+    background: rgba(107,174,212,0.05);
+  }
+  .panel-tab:hover:not(.active) { color: var(--text-dim); }
+
+  .panel-body { flex: 1; overflow-y: auto; padding: 0.8rem; }
+
+  /* ─── ADD ITEM FORM ─── */
+  .add-item-form { display: flex; flex-direction: column; gap: 0.6rem; }
+  .form-row { display: flex; gap: 0.5rem; }
+  .form-group { flex: 1; display: flex; flex-direction: column; gap: 0.25rem; }
+  .form-group label { font-size: 0.65rem; margin-bottom: 0; }
+
+  select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    font-family: 'IM Fell English', serif;
+    font-size: 0.88rem;
+    padding: 0.48rem 0.6rem;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.2s;
+  }
+  select:focus { border-color: var(--ice-dim); }
+  select option { background: var(--surface); }
+
+  .form-input-sm {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    font-family: 'IM Fell English', serif;
+    font-size: 0.88rem;
+    padding: 0.48rem 0.6rem;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.2s;
+  }
+  .form-input-sm:focus { border-color: var(--ice-dim); }
+
+  .btn-add {
+    background: linear-gradient(180deg, #152030 0%, #0d1822 100%);
+    border: 1px solid var(--ice-dim);
+    border-radius: 2px;
+    color: var(--ice);
+    font-family: 'Uncial Antiqua', serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    padding: 0.6rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+  }
+  .btn-add:hover {
+    border-color: var(--ice);
+    color: var(--ice-bright);
+    box-shadow: 0 0 12px rgba(107,174,212,0.15);
+  }
+  .btn-add:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ─── COMPENDIUM ─── */
+  .compendium-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.42rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    margin-bottom: 0.32rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--bg);
+  }
+  .compendium-item:hover { border-color: var(--border-bright); background: var(--surface2); }
+  .compendium-item-icon { font-size: 1rem; }
+  .compendium-item-info { flex: 1; }
+  .compendium-item-name { font-size: 0.86rem; font-style: italic; }
+  .compendium-item-meta { font-size: 0.7rem; color: var(--text-faint); font-style: italic; }
+  .compendium-item-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 0.68rem;
+    padding: 0.14rem 0.4rem;
+    border-radius: 2px;
+    cursor: pointer;
+    font-family: 'Uncial Antiqua', serif;
+    letter-spacing: 0.04em;
+    transition: all 0.15s;
+  }
+  .compendium-item-btn:hover { border-color: var(--ice-dim); color: var(--ice); }
+
+  /* ─── LOG ─── */
+  .log-entry {
+    font-size: 0.78rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--surface3);
+    color: var(--text-dim);
+    display: flex;
+    gap: 0.5rem;
+    font-style: italic;
+  }
+  .log-time { color: var(--text-faint); flex-shrink: 0; font-size: 0.7rem; }
+
+  /* ─── TOOLTIP ─── */
+  .tooltip {
+    position: fixed;
+    background: linear-gradient(160deg, #0f1e30 0%, #090f1a 100%);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    padding: 0.7rem 0.9rem;
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 200px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.8), 0 0 20px rgba(50,100,180,0.08);
+    display: none;
+  }
+  .tooltip.visible { display: block; }
+  .tooltip::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ice-dim), transparent);
+    opacity: 0.5;
+  }
+  .tooltip-name { font-family: 'Uncial Antiqua', serif; font-size: 0.85rem; color: var(--ice); margin-bottom: 0.3rem; }
+  .tooltip-type { font-size: 0.73rem; color: var(--text-dim); font-style: italic; margin-bottom: 0.25rem; }
+  .tooltip-rarity { font-size: 0.7rem; margin-bottom: 0.35rem; }
+  .tooltip-desc { font-size: 0.78rem; color: var(--text-dim); line-height: 1.45; font-style: italic; }
+  .tooltip-stats { font-size: 0.73rem; color: var(--text-dim); margin-top: 0.3rem; }
+
+  /* ─── RARITY COLORS ─── */
+  .r-common    { color: #8aafc0; }
+  .r-uncommon  { color: #4aad7a; }
+  .r-rare      { color: #4a90d4; }
+  .r-very-rare { color: #9a6ed4; }
+  .r-legendary { color: #d4944a; }
+
+  .gem-common    { background: #8aafc0; }
+  .gem-uncommon  { background: #4aad7a; }
+  .gem-rare      { background: #4a90d4; }
+  .gem-very-rare { background: #9a6ed4; }
+  .gem-legendary { background: #d4944a; }
+
+  /* ─── ITEM COLORS ─── */
+  .item-weapon { background: linear-gradient(135deg, #0e1e30, #080e18); }
+  .item-armor  { background: linear-gradient(135deg, #101a28, #090f1a); }
+  .item-potion { background: linear-gradient(135deg, #151028, #0c0a18); }
+  .item-magic  { background: linear-gradient(135deg, #0e1430, #080a1a); }
+  .item-misc   { background: linear-gradient(135deg, #121820, #0a1018); }
+  .item-food   { background: linear-gradient(135deg, #181820, #101018); }
+  .item-tool   { background: linear-gradient(135deg, #141a1a, #0c1010); }
+  .item-quest  { background: linear-gradient(135deg, #1a1a10, #101008); }
+
+  /* ─── CONTEXT MENU ─── */
+  .context-menu {
+    position: fixed;
+    background: linear-gradient(160deg, #0f1e30 0%, #09101c 100%);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    padding: 0.3rem 0;
+    z-index: 2000;
+    min-width: 150px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.8);
+    display: none;
+  }
+  .context-menu.visible { display: block; }
+  .ctx-item {
+    padding: 0.42rem 0.9rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all 0.1s;
+    font-style: italic;
+  }
+  .ctx-item:hover { background: var(--surface2); color: var(--text); }
+  .ctx-item.danger:hover { background: rgba(192,57,43,0.15); color: #e06c5a; }
+  .ctx-sep { height: 1px; background: var(--border); margin: 0.2rem 0; }
+
+  /* ─── SCROLLBAR ─── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+
+  /* ─── TOAST ─── */
+  .toast-container {
+    position: fixed;
+    bottom: 1.5rem; right: 1.5rem;
+    z-index: 3000;
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .toast {
+    background: var(--surface2);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    padding: 0.55rem 1rem;
+    font-size: 0.82rem;
+    color: var(--text);
+    animation: frost-in 0.25s ease;
+    max-width: 280px;
+    font-style: italic;
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error   { border-color: #c0392b; }
+
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #c0392b;
+    display: inline-block;
+    margin-right: 0.4rem;
+    transition: background 0.3s;
+  }
+  .status-dot.connected { background: var(--green); box-shadow: 0 0 5px rgba(26,138,90,0.5); }
+</style>
+</head>
+<body>
+
+<canvas id="snow-canvas"></canvas>
+
+<!-- ══════════════════ LOBBY ══════════════════ -->
+<div id="lobby-screen">
+  <div class="lobby-card">
+    <span class="rune-corner tl">ᚦ</span>
+    <span class="rune-corner tr">ᚢ</span>
+    <span class="rune-corner bl">ᚱ</span>
+    <span class="rune-corner br">ᛞ</span>
+
+    <h1 class="lobby-title">❄ The North</h1>
+    <p class="lobby-subtitle">Hoard of the North — D&D 5e Shared Inventory</p>
+
+    <div style="margin-bottom:1rem;">
+      <label>Server URL</label>
+      <div class="server-row">
+        <input type="text" id="server-url" placeholder="http://localhost:3001" value="http://localhost:3001">
+        <button class="btn-sm" onclick="testConnection()">Forge Link</button>
+      </div>
+      <div style="font-size:0.74rem; color:var(--text-faint);">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Not connected</span>
+      </div>
+    </div>
+
+    <label>Your Name</label>
+    <input type="text" id="player-name" placeholder="Björn Ironside">
+
+    <button class="btn btn-primary" onclick="createCampaign()">ᚴ  Raise a Warband (Jarl)</button>
+
+    <div class="divider">❄ or ❄</div>
+
+    <label>Warband Rune-Code</label>
+    <input type="text" id="join-code" placeholder="ABC123" style="text-transform:uppercase; letter-spacing:0.25em;">
+    <button class="btn btn-secondary" onclick="joinCampaign()">ᚾ  Join the Warband</button>
+
+    <div class="error-msg" id="lobby-error"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ GAME ══════════════════ -->
+<div id="game-screen">
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="game-title">❄ The North</span>
+      <div class="campaign-badge">Rune: <span id="campaign-code-display">—</span></div>
+    </div>
+    <div class="topbar-right">
+      <span id="dm-badge-el" class="dm-badge" style="display:none;">ᚴ Jarl</span>
+      <span class="player-name-tag" id="topbar-name"></span>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <!-- LEFT: Players -->
+    <div class="left-panel">
+      <div class="panel-header">
+        <span>ᚹ  Warriors</span>
+        <span id="player-count" style="color:var(--text-faint);">0</span>
+      </div>
+      <div class="players-list" id="players-list"></div>
+    </div>
+
+    <!-- CENTER: Inventory -->
+    <div class="center-panel" id="center-panel">
+      <div class="inventory-header">
+        <span class="inventory-owner" id="inv-owner-name">Select a warrior</span>
+        <span class="inventory-stats" id="inv-stats"></span>
+      </div>
+
+      <!-- Grid resize controls (DM only) -->
+      <div id="grid-resize-controls" style="display:none; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+        <input type="hidden" id="resize-target-id">
+        <span style="font-size:0.72rem; color:var(--text-faint); font-family:'Uncial Antiqua',serif; letter-spacing:0.1em;">Grid Size</span>
+        <div style="display:flex; align-items:center; gap:0.35rem;">
+          <label style="font-size:0.68rem; margin:0; color:var(--text-faint);">W</label>
+          <input type="number" id="resize-cols" min="4" max="20" style="width:52px; background:var(--bg); border:1px solid var(--border); border-radius:2px; color:var(--text); font-family:'IM Fell English',serif; font-size:0.85rem; padding:0.25rem 0.4rem; outline:none; text-align:center;">
+        </div>
+        <span style="color:var(--text-faint); font-size:0.8rem;">×</span>
+        <div style="display:flex; align-items:center; gap:0.35rem;">
+          <label style="font-size:0.68rem; margin:0; color:var(--text-faint);">H</label>
+          <input type="number" id="resize-rows" min="4" max="16" style="width:52px; background:var(--bg); border:1px solid var(--border); border-radius:2px; color:var(--text); font-family:'IM Fell English',serif; font-size:0.85rem; padding:0.25rem 0.4rem; outline:none; text-align:center;">
+        </div>
+        <button onclick="applyGridResize()" style="background:linear-gradient(180deg,#152030,#0d1822); border:1px solid var(--ice-dim); border-radius:2px; color:var(--ice); font-family:'Uncial Antiqua',serif; font-size:0.68rem; letter-spacing:0.08em; padding:0.3rem 0.7rem; cursor:pointer; transition:all 0.2s;" onmouseover="this.style.borderColor='var(--ice)'" onmouseout="this.style.borderColor='var(--ice-dim)'">Apply</button>
+      </div>
+      <div class="grid-wrapper">
+        <div class="inv-grid" id="inv-grid"></div>
+      </div>
+      <div class="items-list" id="items-list"></div>
+    </div>
+
+    <!-- RIGHT: Tools -->
+    <div class="right-panel">
+      <div class="panel-tabs">
+        <button class="panel-tab active" onclick="switchTab('compendium', this)">Armoury</button>
+        <button class="panel-tab" onclick="switchTab('add', this)">Forge</button>
+        <button class="panel-tab" onclick="switchTab('log', this)">Saga</button>
+      </div>
+
+      <div class="panel-body" id="tab-compendium">
+        <div id="compendium-list"></div>
+      </div>
+
+      <div class="panel-body" id="tab-add" style="display:none;">
+        <div class="add-item-form" id="add-item-form">
+          <div class="form-group">
+            <label>Item Name</label>
+            <input type="text" class="form-input-sm" id="new-item-name" placeholder="Frostfang Axe">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Type</label>
+              <select id="new-item-type">
+                <option value="weapon">⚔ Weapon</option>
+                <option value="armor">🛡 Armor</option>
+                <option value="potion">⚗ Potion</option>
+                <option value="magic">✨ Magic</option>
+                <option value="tool">🔧 Tool</option>
+                <option value="food">🍖 Food</option>
+                <option value="quest">📜 Quest</option>
+                <option value="misc">🎒 Misc</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Rarity</label>
+              <select id="new-item-rarity">
+                <option value="common">Common</option>
+                <option value="uncommon">Uncommon</option>
+                <option value="rare">Rare</option>
+                <option value="very-rare">Very Rare</option>
+                <option value="legendary">Legendary</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Width</label>
+              <select id="new-item-w">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Height</label>
+              <select id="new-item-h">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Weight</label>
+              <input type="text" class="form-input-sm" id="new-item-weight" placeholder="3 lb">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" class="form-input-sm" id="new-item-desc" placeholder="Forged in the mountains of Jotunheim...">
+          </div>
+          <div class="form-group" id="give-to-row">
+            <label>Give To</label>
+            <select id="new-item-target"></select>
+          </div>
+          <button class="btn-add" onclick="addCustomItem()" id="add-item-btn">⚒ Add to Hoard</button>
+        </div>
+        <div id="non-dm-msg" style="display:none; color:var(--text-faint); font-style:italic; font-size:0.85rem; text-align:center; padding:1rem;">
+          Only the Jarl may forge items.
+        </div>
+      </div>
+
+      <div class="panel-body" id="tab-log" style="display:none;">
+        <div id="log-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Tooltip ─── -->
+<div class="tooltip" id="tooltip">
+  <div class="tooltip-name" id="tip-name"></div>
+  <div class="tooltip-type" id="tip-type"></div>
+  <div class="tooltip-rarity" id="tip-rarity"></div>
+  <div class="tooltip-desc" id="tip-desc"></div>
+  <div class="tooltip-stats" id="tip-stats"></div>
+</div>
+
+<!-- ─── Context Menu ─── -->
+<div class="context-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-give">Pass to warrior...</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="ctx-remove">Cast away</div>
+</div>
+
+<!-- ─── Toast ─── -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+// ── SNOW CANVAS ──
+(function() {
+  const canvas = document.getElementById('snow-canvas');
+  const ctx = canvas.getContext('2d');
+  let flakes = [];
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  for (let i = 0; i < 80; i++) {
+    flakes.push({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      r: Math.random() * 2.2 + 0.4,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: Math.random() * 0.6 + 0.2,
+      opacity: Math.random() * 0.5 + 0.1
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    flakes.forEach(f => {
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,230,255,${f.opacity})`;
+      ctx.fill();
+      f.x += f.vx;
+      f.y += f.vy;
+      if (f.y > canvas.height) { f.y = -4; f.x = Math.random() * canvas.width; }
+      if (f.x > canvas.width)  f.x = 0;
+      if (f.x < 0) f.x = canvas.width;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+</script>
+
+<script>
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let socket = null;
+let campaign = null;
+let me = null;
+let viewingPlayerId = null;
+let dragState = null;
+let ctxItem = null;
+let ctxPlayerId = null;
+
+const GRID_COLS = 10;
+const GRID_ROWS = 8;
+const CELL = 54; // cell + gap
+
+const ITEM_ICONS = {
+  weapon: '⚔', armor: '🛡', potion: '⚗', magic: '✨',
+  tool: '🔧', food: '🍖', quest: '📜', misc: '🎒'
+};
+
+const COMPENDIUM = [
+  { name: 'Longsword', type: 'weapon', rarity: 'common', w: 1, h: 2, weight: '3 lb', desc: 'A versatile melee weapon. Deals 1d8 slashing damage.' },
+  { name: 'Shortsword', type: 'weapon', rarity: 'common', w: 1, h: 2, weight: '2 lb', desc: 'A light, finesse weapon. Deals 1d6 piercing damage.' },
+  { name: 'Dagger', type: 'weapon', rarity: 'common', w: 1, h: 1, weight: '1 lb', desc: 'A small, concealable blade. Deals 1d4 piercing damage.' },
+  { name: 'Greataxe', type: 'weapon', rarity: 'common', w: 1, h: 3, weight: '7 lb', desc: 'A heavy, two-handed weapon. Deals 1d12 slashing damage.' },
+  { name: 'Longbow', type: 'weapon', rarity: 'common', w: 2, h: 3, weight: '2 lb', desc: 'A ranged weapon with 150/600 ft range. Deals 1d8 piercing.' },
+  { name: 'Shield', type: 'armor', rarity: 'common', w: 2, h: 2, weight: '6 lb', desc: 'Adds +2 to AC when wielded.' },
+  { name: 'Chain Mail', type: 'armor', rarity: 'common', w: 2, h: 2, weight: '55 lb', desc: 'Heavy armor. AC 16. Strength 13 required.' },
+  { name: 'Leather Armor', type: 'armor', rarity: 'common', w: 2, h: 2, weight: '10 lb', desc: 'Light armor. AC 11 + Dex modifier.' },
+  { name: 'Healing Potion', type: 'potion', rarity: 'common', w: 1, h: 1, weight: '0.5 lb', desc: 'Restores 2d4+2 hit points when consumed.' },
+  { name: 'Greater Healing', type: 'potion', rarity: 'uncommon', w: 1, h: 1, weight: '0.5 lb', desc: 'Restores 4d4+4 hit points when consumed.' },
+  { name: 'Potion of Speed', type: 'potion', rarity: 'rare', w: 1, h: 1, weight: '0.5 lb', desc: 'Grants the effects of haste for 1 minute.' },
+  { name: 'Bag of Holding', type: 'magic', rarity: 'uncommon', w: 2, h: 1, weight: '15 lb', desc: 'Holds 500 lb within a 64 cubic foot space.' },
+  { name: 'Cloak of Protection', type: 'magic', rarity: 'uncommon', w: 2, h: 2, weight: '1 lb', desc: '+1 bonus to AC and saving throws.' },
+  { name: 'Ring of Protection', type: 'magic', rarity: 'rare', w: 1, h: 1, weight: '—', desc: '+1 to AC and saving throws. Requires attunement.' },
+  { name: 'Rope (50 ft)', type: 'misc', rarity: 'common', w: 2, h: 1, weight: '10 lb', desc: 'Hempen rope. Has 2 hit points and can be burst with DC 17 Strength check.' },
+  { name: 'Torch', type: 'misc', rarity: 'common', w: 1, h: 1, weight: '1 lb', desc: 'Burns for 1 hour. Sheds bright light in 20 ft, dim light in 40 ft.' },
+  { name: 'Thieves Tools', type: 'tool', rarity: 'common', w: 1, h: 1, weight: '1 lb', desc: 'Required for picking locks and disabling traps.' },
+  { name: 'Rations (1 day)', type: 'food', rarity: 'common', w: 1, h: 1, weight: '2 lb', desc: 'Dry foods suitable for extended travel.' },
+  { name: 'Spell Scroll', type: 'quest', rarity: 'uncommon', w: 1, h: 1, weight: '—', desc: 'A single-use magical scroll. Level varies.' },
+  { name: 'Gold Coins (10)', type: 'misc', rarity: 'common', w: 1, h: 1, weight: '0.2 lb', desc: '10 gold pieces.' },
+];
+
+// ═══════════════════════════════════════════════
+// CONNECTION
+// ═══════════════════════════════════════════════
+function testConnection() {
+  const url = document.getElementById('server-url').value.trim();
+  if (!url) return;
+  connectSocket(url);
+}
+
+function connectSocket(url) {
+  if (socket) socket.disconnect();
+  socket = io(url, { transports: ['websocket', 'polling'] });
+
+  socket.on('connect', () => {
+    document.getElementById('status-dot').classList.add('connected');
+    document.getElementById('status-text').textContent = 'Connected';
+    toast('Connected to server', 'success');
+  });
+
+  socket.on('disconnect', () => {
+    document.getElementById('status-dot').classList.remove('connected');
+    document.getElementById('status-text').textContent = 'Disconnected';
+    toast('Disconnected from server', 'error');
+  });
+
+  socket.on('connect_error', () => {
+    document.getElementById('status-text').textContent = 'Cannot connect';
+    toast('Cannot connect to server', 'error');
+  });
+
+  socket.on('campaign_update', (data) => {
+    campaign = data;
+    if (me) {
+      const updated = data.players.find(p => p.id === me.id);
+      if (updated) {
+        const wasDM = me.isDM;
+        me = updated;
+        // Refresh DM UI if status changed
+        if (wasDM !== me.isDM) refreshDMUI();
+      }
+    }
+    renderGame();
+  });
+
+  socket.on('error', (e) => toast(e.message, 'error'));
+}
+
+// ═══════════════════════════════════════════════
+// LOBBY ACTIONS
+// ═══════════════════════════════════════════════
+function createCampaign() {
+  const name = document.getElementById('player-name').value.trim();
+  if (!name) return showError('Enter your name');
+  if (!socket || !socket.connected) {
+    testConnection();
+    setTimeout(() => doCreate(name), 800);
+    return;
+  }
+  doCreate(name);
+}
+
+function doCreate(name) {
+  socket.emit('create_campaign', { dmName: name }, (res) => {
+    if (!res.success) return showError(res.error);
+    campaign = res.campaign;
+    me = res.you;
+    enterGame();
+  });
+}
+
+function joinCampaign() {
+  const name = document.getElementById('player-name').value.trim();
+  const code = document.getElementById('join-code').value.trim().toUpperCase();
+  if (!name) return showError('Enter your name');
+  if (!code) return showError('Enter campaign code');
+  if (!socket || !socket.connected) {
+    testConnection();
+    setTimeout(() => doJoin(name, code), 800);
+    return;
+  }
+  doJoin(name, code);
+}
+
+function doJoin(name, code) {
+  socket.emit('join_campaign', { playerName: name, code }, (res) => {
+    if (!res.success) return showError(res.error);
+    campaign = res.campaign;
+    me = res.you;
+    enterGame();
+  });
+}
+
+function showError(msg) {
+  document.getElementById('lobby-error').textContent = msg;
+  setTimeout(() => document.getElementById('lobby-error').textContent = '', 3000);
+}
+
+function enterGame() {
+  document.getElementById('lobby-screen').style.display = 'none';
+  document.getElementById('game-screen').style.display = 'flex';
+  document.getElementById('campaign-code-display').textContent = campaign.id;
+  document.getElementById('topbar-name').textContent = me.name;
+  if (me.isDM) document.getElementById('dm-badge-el').style.display = 'inline-block';
+
+  // Show/hide DM tools
+  if (me.isDM) {
+    document.getElementById('add-item-form').style.display = 'flex';
+    document.getElementById('non-dm-msg').style.display = 'none';
+  } else {
+    document.getElementById('add-item-form').style.display = 'none';
+    document.getElementById('non-dm-msg').style.display = 'block';
+  }
+
+  viewingPlayerId = me.id;
+  renderCompendium();
+  renderGame();
+}
+
+// ═══════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════
+function renderGame() {
+  renderPlayersList();
+  renderInventory();
+  renderLog();
+  renderTargetSelect();
+}
+
+function renderPlayersList() {
+  if (!campaign) return;
+  const list = document.getElementById('players-list');
+  document.getElementById('player-count').textContent = campaign.players.length;
+  const dmCount = campaign.players.filter(p => p.isDM).length;
+
+  list.innerHTML = campaign.players.map(p => {
+    const isMe = p.id === me.id;
+    const canManage = me.isDM && !isMe;
+    let actionBtns = '';
+    if (canManage) {
+      if (!p.isDM) {
+        actionBtns = `<button class="btn-promote" title="Promote to DM" onclick="promotePlayer(event,'${p.id}')">▲ DM</button>`;
+      } else if (dmCount > 1) {
+        actionBtns = `<button class="btn-demote" title="Demote to player" onclick="demotePlayer(event,'${p.id}')">▼</button>`;
+      }
+    }
+    return `
+      <div class="player-tab ${p.id === viewingPlayerId ? 'active' : ''}" onclick="viewPlayer('${p.id}')">
+        <div class="player-dot"></div>
+        <span class="player-tab-name">${p.name}</span>
+        ${p.isDM ? '<span class="player-tab-dm">DM</span>' : ''}
+        ${actionBtns ? `<div class="player-tab-actions">${actionBtns}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function viewPlayer(playerId) {
+  viewingPlayerId = playerId;
+  renderPlayersList();
+  renderInventory();
+}
+
+function renderInventory() {
+  if (!campaign || !viewingPlayerId) return;
+  const player = campaign.players.find(p => p.id === viewingPlayerId);
+  if (!player) return;
+
+  document.getElementById('inv-owner-name').textContent = player.name + "'s Inventory";
+
+  const cols = player.gridCols || 10;
+  const rows = player.gridRows || 8;
+  const usedSlots = player.items.reduce((acc, i) => acc + (i.w||1) * (i.h||1), 0);
+  const total = cols * rows;
+  document.getElementById('inv-stats').textContent = `${usedSlots}/${total} slots · ${cols}×${rows}`;
+
+  // Show/hide grid resize controls (DM only)
+  const resizeEl = document.getElementById('grid-resize-controls');
+  if (me && me.isDM) {
+    resizeEl.style.display = 'flex';
+    document.getElementById('resize-cols').value = cols;
+    document.getElementById('resize-rows').value = rows;
+    document.getElementById('resize-target-id').value = player.id;
+  } else {
+    resizeEl.style.display = 'none';
+  }
+
+  renderGrid(player);
+  renderItemList(player);
+}
+
+function renderGrid(player) {
+  const grid = document.getElementById('inv-grid');
+  const cols = player.gridCols || 10;
+  const rows = player.gridRows || 8;
+
+  grid.style.gridTemplateColumns = `repeat(${cols}, var(--cell))`;
+  grid.style.gridTemplateRows    = `repeat(${rows}, var(--cell))`;
+  grid.innerHTML = '';
+
+  // Cells
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const cell = document.createElement('div');
+      cell.className = 'grid-cell';
+      cell.dataset.x = x;
+      cell.dataset.y = y;
+      cell.addEventListener('dragover', onCellDragOver);
+      cell.addEventListener('dragleave', onCellDragLeave);
+      cell.addEventListener('drop', onCellDrop);
+      grid.appendChild(cell);
+    }
+  }
+
+  // Items
+  player.items.forEach(item => {
+    const el = document.createElement('div');
+    el.className = `inv-item item-${item.type}`;
+    el.dataset.itemId = item.id;
+    el.style.cssText = `
+      left: ${item.x * CELL}px;
+      top: ${item.y * CELL}px;
+      width: ${item.w * CELL - 2}px;
+      height: ${item.h * CELL - 2}px;
+    `;
+
+    const canDrag = (viewingPlayerId === me.id) || me.isDM;
+    if (canDrag) el.draggable = true;
+
+    el.innerHTML = `
+      <div class="item-icon">${ITEM_ICONS[item.type] || '📦'}</div>
+      ${item.w > 1 || item.h > 1 ? `<div class="item-label">${item.name}</div>` : ''}
+      <div class="item-rarity-gem gem-${item.rarity}"></div>
+    `;
+
+    el.addEventListener('dragstart', (e) => onItemDragStart(e, item, player.id));
+    el.addEventListener('mousemove', (e) => showTooltip(e, item));
+    el.addEventListener('mouseleave', hideTooltip);
+    el.addEventListener('contextmenu', (e) => showCtxMenu(e, item, player.id));
+
+    grid.appendChild(el);
+  });
+}
+
+function renderItemList(player) {
+  const list = document.getElementById('items-list');
+  if (player.items.length === 0) {
+    list.innerHTML = `<div style="color:var(--text-faint);font-style:italic;font-size:0.85rem;padding:0.5rem;">No items in inventory.</div>`;
+    return;
+  }
+  const canRemove = (viewingPlayerId === me.id) || me.isDM;
+  list.innerHTML = player.items.map(item => `
+    <div class="item-list-row">
+      <span class="item-list-icon">${ITEM_ICONS[item.type]}</span>
+      <span class="item-list-name">${item.name}</span>
+      <span class="item-list-type r-${item.rarity}">${item.rarity}</span>
+      <span class="item-list-type">${item.weight || ''}</span>
+      ${canRemove ? `<button class="item-list-remove" onclick="removeItem('${player.id}','${item.id}')">✕</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderLog() {
+  if (!campaign) return;
+  const list = document.getElementById('log-list');
+  list.innerHTML = (campaign.log || []).map(e => `
+    <div class="log-entry">
+      <span class="log-time">${e.time}</span>
+      <span>${e.message}</span>
+    </div>
+  `).join('');
+}
+
+function renderCompendium() {
+  const list = document.getElementById('compendium-list');
+  list.innerHTML = COMPENDIUM.map(item => `
+    <div class="compendium-item">
+      <span class="compendium-item-icon">${ITEM_ICONS[item.type]}</span>
+      <div class="compendium-item-info">
+        <div class="compendium-item-name">${item.name}</div>
+        <div class="compendium-item-meta r-${item.rarity}">${item.rarity} · ${item.w}×${item.h}</div>
+      </div>
+      ${me && me.isDM ? `<button class="compendium-item-btn" onclick='giveFromCompendium(${JSON.stringify(item)})'>Give</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderTargetSelect() {
+  if (!campaign || !me || !me.isDM) return;
+  const sel = document.getElementById('new-item-target');
+  const prev = sel.value;
+  sel.innerHTML = campaign.players.map(p =>
+    `<option value="${p.id}" ${p.id === viewingPlayerId ? 'selected' : ''}>${p.name}</option>`
+  ).join('');
+  if (prev) sel.value = prev;
+}
+
+// ═══════════════════════════════════════════════
+// DRAG & DROP
+// ═══════════════════════════════════════════════
+function onItemDragStart(e, item, ownerId) {
+  dragState = { item, ownerId, originX: item.x, originY: item.y };
+  setTimeout(() => e.target.classList.add('dragging'), 0);
+  e.dataTransfer.effectAllowed = 'move';
+
+  // Store offset within item
+  const rect = e.target.getBoundingClientRect();
+  dragState.offX = Math.floor((e.clientX - rect.left) / CELL);
+  dragState.offY = Math.floor((e.clientY - rect.top) / CELL);
+}
+
+function onCellDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragHighlights();
+
+  if (!dragState) return;
+  const x = parseInt(e.currentTarget.dataset.x) - dragState.offX;
+  const y = parseInt(e.currentTarget.dataset.y) - dragState.offY;
+  const player = campaign.players.find(p => p.id === viewingPlayerId);
+  if (!player) return;
+  const cols = player.gridCols || 10;
+  const rows = player.gridRows || 8;
+
+  // Check if valid (build temp grid without this item)
+  const tmpGrid = player.grid.map(r => [...r]);
+  const item = dragState.item;
+  for (let dy = 0; dy < (item.h||1); dy++)
+    for (let dx = 0; dx < (item.w||1); dx++)
+      if (tmpGrid[item.y+dy] && tmpGrid[item.y+dy][item.x+dx] === item.id)
+        tmpGrid[item.y+dy][item.x+dx] = null;
+
+  const valid = canPlaceLocal(tmpGrid, item, x, y, cols, rows);
+
+  // Highlight cells
+  for (let dy = 0; dy < (item.h||1); dy++) {
+    for (let dx = 0; dx < (item.w||1); dx++) {
+      const cellX = x + dx, cellY = y + dy;
+      if (cellX < 0 || cellY < 0 || cellX >= cols || cellY >= rows) continue;
+      const idx = cellY * cols + cellX;
+      const cells = document.getElementById('inv-grid').querySelectorAll('.grid-cell');
+      if (cells[idx]) cells[idx].classList.add(valid ? 'drag-over' : 'drag-over-invalid');
+    }
+  }
+}
+
+function onCellDragLeave(e) {
+  // only clear when leaving grid entirely
+}
+
+function onCellDrop(e) {
+  e.preventDefault();
+  clearDragHighlights();
+  if (!dragState) return;
+
+  const toX = parseInt(e.currentTarget.dataset.x) - dragState.offX;
+  const toY = parseInt(e.currentTarget.dataset.y) - dragState.offY;
+
+  document.querySelectorAll('.inv-item.dragging').forEach(el => el.classList.remove('dragging'));
+
+  socket.emit('move_item', {
+    itemId: dragState.item.id,
+    fromX: dragState.originX,
+    fromY: dragState.originY,
+    toX, toY
+  });
+
+  dragState = null;
+}
+
+function clearDragHighlights() {
+  document.querySelectorAll('.drag-over, .drag-over-invalid').forEach(el => {
+    el.classList.remove('drag-over', 'drag-over-invalid');
+  });
+}
+
+function canPlaceLocal(grid, item, x, y, cols, rows) {
+  const w = item.w||1, h = item.h||1;
+  if (x < 0 || y < 0 || x+w > cols || y+h > rows) return false;
+  for (let dy = 0; dy < h; dy++)
+    for (let dx = 0; dx < w; dx++)
+      if (grid[y+dy][x+dx] !== null) return false;
+  return true;
+}
+
+// ═══════════════════════════════════════════════
+// ITEM ACTIONS
+// ═══════════════════════════════════════════════
+function addCustomItem() {
+  if (!me || !me.isDM) return;
+  const name = document.getElementById('new-item-name').value.trim();
+  if (!name) return toast('Enter an item name', 'error');
+
+  const item = {
+    name,
+    type: document.getElementById('new-item-type').value,
+    rarity: document.getElementById('new-item-rarity').value,
+    w: parseInt(document.getElementById('new-item-w').value),
+    h: parseInt(document.getElementById('new-item-h').value),
+    weight: document.getElementById('new-item-weight').value,
+    desc: document.getElementById('new-item-desc').value,
+  };
+  const targetId = document.getElementById('new-item-target').value || viewingPlayerId;
+  socket.emit('add_item', { targetPlayerId: targetId, item });
+  document.getElementById('new-item-name').value = '';
+  document.getElementById('new-item-desc').value = '';
+}
+
+function giveFromCompendium(item) {
+  if (!me || !me.isDM) return;
+  const targetId = viewingPlayerId || me.id;
+  socket.emit('add_item', { targetPlayerId: targetId, item });
+}
+
+function applyGridResize() {
+  const targetId = document.getElementById('resize-target-id').value;
+  const cols = parseInt(document.getElementById('resize-cols').value);
+  const rows = parseInt(document.getElementById('resize-rows').value);
+  if (!targetId || isNaN(cols) || isNaN(rows)) return;
+  socket.emit('resize_grid', { targetPlayerId: targetId, cols, rows });
+}
+
+function promotePlayer(e, playerId) {
+  e.stopPropagation();
+  socket.emit('promote_to_dm', { targetPlayerId: playerId });
+}
+
+function demotePlayer(e, playerId) {
+  e.stopPropagation();
+  socket.emit('demote_from_dm', { targetPlayerId: playerId });
+}
+
+function removeItem(playerId, itemId) {
+  socket.emit('remove_item', { targetPlayerId: playerId, itemId });
+}
+
+// ═══════════════════════════════════════════════
+// CONTEXT MENU
+// ═══════════════════════════════════════════════
+function showCtxMenu(e, item, playerId) {
+  e.preventDefault();
+  ctxItem = item;
+  ctxPlayerId = playerId;
+  const menu = document.getElementById('ctx-menu');
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.classList.add('visible');
+
+  document.getElementById('ctx-give').style.display = me.isDM ? 'block' : 'none';
+}
+
+document.getElementById('ctx-remove').onclick = () => {
+  if (ctxItem && ctxPlayerId) removeItem(ctxPlayerId, ctxItem.id);
+  hideCtxMenu();
+};
+
+document.getElementById('ctx-give').onclick = () => {
+  if (!ctxItem || !me.isDM) return hideCtxMenu();
+  const targets = campaign.players.filter(p => p.id !== ctxPlayerId);
+  if (!targets.length) { toast('No other players to give to', 'error'); return hideCtxMenu(); }
+  const names = targets.map((p,i) => `${i+1}. ${p.name}`).join('\n');
+  const choice = prompt(`Give to:\n${names}\n\nEnter number:`);
+  const idx = parseInt(choice) - 1;
+  if (idx >= 0 && idx < targets.length) {
+    socket.emit('add_item', { targetPlayerId: targets[idx].id, item: ctxItem });
+    removeItem(ctxPlayerId, ctxItem.id);
+  }
+  hideCtxMenu();
+};
+
+function hideCtxMenu() {
+  document.getElementById('ctx-menu').classList.remove('visible');
+}
+document.addEventListener('click', hideCtxMenu);
+
+// ═══════════════════════════════════════════════
+// TOOLTIP
+// ═══════════════════════════════════════════════
+function showTooltip(e, item) {
+  const tip = document.getElementById('tooltip');
+  document.getElementById('tip-name').textContent = item.name;
+  document.getElementById('tip-type').textContent = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+  document.getElementById('tip-rarity').innerHTML = `<span class="r-${item.rarity}">${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1)}</span>`;
+  document.getElementById('tip-desc').textContent = item.desc || '';
+  document.getElementById('tip-stats').textContent = item.weight ? `Weight: ${item.weight}` : '';
+  tip.classList.add('visible');
+  moveTooltip(e);
+}
+
+function moveTooltip(e) {
+  const tip = document.getElementById('tooltip');
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + 210 > window.innerWidth) x = e.clientX - 214;
+  if (y + 140 > window.innerHeight) y = e.clientY - 144;
+  tip.style.left = x + 'px';
+  tip.style.top = y + 'px';
+}
+
+document.addEventListener('mousemove', (e) => {
+  if (document.getElementById('tooltip').classList.contains('visible')) moveTooltip(e);
+});
+
+function hideTooltip() {
+  document.getElementById('tooltip').classList.remove('visible');
+}
+
+// ═══════════════════════════════════════════════
+// UI
+// ═══════════════════════════════════════════════
+function switchTab(tab, btn) {
+  ['compendium','add','log'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
+  });
+  document.querySelectorAll('.panel-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+function refreshDMUI() {
+  if (me.isDM) {
+    document.getElementById('dm-badge-el').style.display = 'inline-block';
+    document.getElementById('add-item-form').style.display = 'flex';
+    document.getElementById('non-dm-msg').style.display = 'none';
+    toast('You have been promoted to Dungeon Master!', 'success');
+  } else {
+    document.getElementById('dm-badge-el').style.display = 'none';
+    document.getElementById('add-item-form').style.display = 'none';
+    document.getElementById('non-dm-msg').style.display = 'block';
+    toast('You have been demoted to player.', '');
+  }
+  renderCompendium();
+}
+
+// Auto-connect on page load
+window.addEventListener('load', () => {
+  const url = document.getElementById('server-url').value;
+  connectSocket(url);
+  renderCompendium();
+});
+</script>
+</body>
+</html>
