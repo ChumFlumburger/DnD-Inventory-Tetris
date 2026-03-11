@@ -837,6 +837,38 @@
   .compendium-draggable { cursor: grab; }
   .compendium-draggable:active { cursor: grabbing; }
 
+  .saved-campaign-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text-dim);
+    font-family: 'IM Fell English', serif;
+    font-size: 0.88rem;
+    font-style: italic;
+    cursor: pointer;
+    margin-bottom: 0.3rem;
+    transition: all 0.15s;
+    text-align: left;
+  }
+  .saved-campaign-btn:hover {
+    border-color: var(--ice-dim);
+    color: var(--ice);
+    background: var(--surface2);
+  }
+  .saved-campaign-code {
+    font-family: 'Uncial Antiqua', serif;
+    font-style: normal;
+    font-size: 0.75rem;
+    color: var(--ice-dim);
+    letter-spacing: 0.1em;
+    margin-left: auto;
+  }
+
   /* ─── SCROLLBAR ─── */
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -904,12 +936,20 @@
     <label>Your Name</label>
     <input type="text" id="player-name" placeholder="Björn Ironside">
 
+    <label>Campaign Name / Code</label>
+    <input type="text" id="create-code" placeholder="e.g. FROSTHAVEN" style="text-transform:uppercase; letter-spacing:0.15em;">
     <button class="btn btn-primary" onclick="createCampaign()">ᚴ  Raise a Warband (Jarl)</button>
+
+    <!-- Saved campaigns (populated from localStorage) -->
+    <div id="saved-campaigns" style="display:none; margin-top:0.8rem;">
+      <div style="font-size:0.68rem; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-faint); font-family:'Uncial Antiqua',serif; margin-bottom:0.4rem;">Recent Warbands</div>
+      <div id="saved-campaigns-list"></div>
+    </div>
 
     <div class="divider">❄ or ❄</div>
 
     <label>Warband Rune-Code</label>
-    <input type="text" id="join-code" placeholder="ABC123" style="text-transform:uppercase; letter-spacing:0.25em;">
+    <input type="text" id="join-code" placeholder="FROSTHAVEN" style="text-transform:uppercase; letter-spacing:0.25em;">
     <button class="btn btn-secondary" onclick="joinCampaign()">ᚾ  Join the Warband</button>
 
     <div class="error-msg" id="lobby-error"></div>
@@ -1222,24 +1262,67 @@ function connectSocket(url) {
 }
 
 // ═══════════════════════════════════════════════
+// SAVED CAMPAIGNS (localStorage)
+// ═══════════════════════════════════════════════
+function getSavedCampaigns() {
+  try { return JSON.parse(localStorage.getItem('the-north-campaigns') || '[]'); }
+  catch { return []; }
+}
+
+function saveCampaignLocally(code, name, playerName, isDM) {
+  const saved = getSavedCampaigns().filter(c => c.code !== code);
+  saved.unshift({ code, name: name || code, playerName, isDM, ts: Date.now() });
+  localStorage.setItem('the-north-campaigns', JSON.stringify(saved.slice(0, 8)));
+  renderSavedCampaigns();
+}
+
+function renderSavedCampaigns() {
+  const saved = getSavedCampaigns();
+  const el = document.getElementById('saved-campaigns');
+  const list = document.getElementById('saved-campaigns-list');
+  if (!saved.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  list.innerHTML = saved.map(c => `
+    <button class="saved-campaign-btn" onclick="quickJoin('${c.code}','${c.playerName}',${c.isDM})">
+      <span>${c.isDM ? 'ᚴ' : 'ᚾ'} ${c.playerName}</span>
+      <span class="saved-campaign-code">${c.code}</span>
+    </button>
+  `).join('');
+}
+
+function quickJoin(code, playerName, isDM) {
+  document.getElementById('player-name').value = playerName;
+  if (isDM) {
+    document.getElementById('create-code').value = code;
+    createCampaign();
+  } else {
+    document.getElementById('join-code').value = code;
+    joinCampaign();
+  }
+}
+
+// ═══════════════════════════════════════════════
 // LOBBY ACTIONS
 // ═══════════════════════════════════════════════
 function createCampaign() {
   const name = document.getElementById('player-name').value.trim();
+  const code = document.getElementById('create-code').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
   if (!name) return showError('Enter your name');
+  if (!code) return showError('Enter a campaign name or code');
   if (!socket || !socket.connected) {
     testConnection();
-    setTimeout(() => doCreate(name), 800);
+    setTimeout(() => doCreate(name, code), 800);
     return;
   }
-  doCreate(name);
+  doCreate(name, code);
 }
 
-function doCreate(name) {
-  socket.emit('create_campaign', { dmName: name }, (res) => {
+function doCreate(name, code) {
+  socket.emit('create_campaign', { dmName: name, code }, (res) => {
     if (!res.success) return showError(res.error);
     campaign = res.campaign;
     me = res.you;
+    saveCampaignLocally(campaign.id, campaign.id, name, true);
     enterGame();
   });
 }
@@ -1262,6 +1345,7 @@ function doJoin(name, code) {
     if (!res.success) return showError(res.error);
     campaign = res.campaign;
     me = res.you;
+    saveCampaignLocally(campaign.id, campaign.id, name, false);
     enterGame();
   });
 }
@@ -1842,6 +1926,7 @@ window.addEventListener('load', () => {
   const url = document.getElementById('server-url').value;
   connectSocket(url);
   renderCompendium();
+  renderSavedCampaigns();
 });
 </script>
 </body>

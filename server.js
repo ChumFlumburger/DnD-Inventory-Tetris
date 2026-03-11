@@ -115,8 +115,28 @@ function addLog(campaign, message) {
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  socket.on('create_campaign', ({ dmName }, cb) => {
-    const campaign = createCampaign(dmName);
+  socket.on('create_campaign', ({ dmName, code }, cb) => {
+    // Sanitise the code — letters and numbers only, max 12 chars
+    const id = code
+      ? code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
+      : Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    if (!id) return cb({ success: false, error: 'Invalid campaign code' });
+
+    // If campaign already exists, just rejoin it as DM
+    let campaign = restoreOrGetCampaign(id);
+    if (!campaign) {
+      campaigns[id] = { id, dm: dmName, players: {}, ground: [], log: [] };
+      dbSaveCampaign(id, dmName);
+      campaign = campaigns[id];
+    }
+
+    // Remove any existing socket entry for this name (reconnect)
+    const existing = Object.values(campaign.players).find(
+      p => p.name.toLowerCase() === dmName.toLowerCase()
+    );
+    if (existing) delete campaign.players[existing.id];
+
     const saved = dbLoadPlayer(campaign.id, dmName);
     const cols  = saved ? saved.grid_cols : DEFAULT_COLS;
     const rows  = saved ? saved.grid_rows : DEFAULT_ROWS;
@@ -130,7 +150,7 @@ io.on('connection', (socket) => {
     socket.playerName = dmName;
 
     dbSavePlayer(campaign.id, player);
-    addLog(campaign, `${dmName} created campaign`);
+    addLog(campaign, `${dmName} ${saved ? 'returned as Jarl' : 'raised the warband'}`);
     cb({ success: true, campaign: sanitize(campaign), you: sanitizePlayer(player) });
     io.to(campaign.id).emit('campaign_update', sanitize(campaign));
   });
