@@ -824,6 +824,19 @@
   .ctx-item.danger:hover { background: rgba(192,57,43,0.15); color: #e06c5a; }
   .ctx-sep { height: 1px; background: var(--border); margin: 0.2rem 0; }
 
+  .ground-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.42rem 0.8rem;
+    border-bottom: 1px solid var(--surface3);
+    transition: background 0.15s;
+  }
+  .ground-item:hover { background: var(--surface2); }
+
+  .compendium-draggable { cursor: grab; }
+  .compendium-draggable:active { cursor: grabbing; }
+
   /* ─── SCROLLBAR ─── */
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -924,6 +937,18 @@
         <span id="player-count" style="color:var(--text-faint);">0</span>
       </div>
       <div class="players-list" id="players-list"></div>
+
+      <!-- Ground loot pile -->
+      <div class="panel-header" style="cursor:pointer; border-top: 1px solid var(--border);" onclick="toggleGround()">
+        <span>⚔ Ground</span>
+        <span id="ground-count" style="color:var(--text-faint);">0</span>
+      </div>
+      <div id="ground-panel" class="players-list" style="max-height:280px; border-top:1px solid var(--border);">
+        <div id="ground-list"></div>
+        <div id="ground-drop-zone" style="display:none; border:1px dashed var(--border); border-radius:2px; padding:0.6rem; text-align:center; font-size:0.75rem; color:var(--text-faint); font-style:italic; margin:0.4rem;">
+          Drop items here
+        </div>
+      </div>
     </div>
 
     <!-- CENTER: Inventory -->
@@ -1185,10 +1210,11 @@ function connectSocket(url) {
       if (updated) {
         const wasDM = me.isDM;
         me = updated;
-        // Refresh DM UI if status changed
         if (wasDM !== me.isDM) refreshDMUI();
       }
     }
+    // Keep viewing own inventory if not DM
+    if (!me.isDM) viewingPlayerId = me.id;
     renderGame();
   });
 
@@ -1264,6 +1290,7 @@ function enterGame() {
   viewingPlayerId = me.id;
   renderCompendium();
   renderGame();
+  setupGroundDropZone();
 }
 
 // ═══════════════════════════════════════════════
@@ -1272,6 +1299,7 @@ function enterGame() {
 function renderGame() {
   renderPlayersList();
   renderInventory();
+  renderGround();
   renderLog();
   renderTargetSelect();
 }
@@ -1279,25 +1307,42 @@ function renderGame() {
 function renderPlayersList() {
   if (!campaign) return;
   const list = document.getElementById('players-list');
-  document.getElementById('player-count').textContent = campaign.players.length;
   const dmCount = campaign.players.filter(p => p.isDM).length;
 
+  // Non-DMs only see themselves — no point showing a list of one
+  if (!me.isDM) {
+    document.getElementById('player-count').textContent = campaign.players.length;
+    const me_player = campaign.players.find(p => p.id === me.id);
+    list.innerHTML = me_player ? `
+      <div class="player-tab active">
+        <div class="player-dot" style="background:var(--ice);box-shadow:0 0 6px rgba(107,174,212,0.5);"></div>
+        <span class="player-tab-name">${me_player.name}</span>
+      </div>
+      <div style="padding:0.6rem 0.8rem; font-size:0.75rem; color:var(--text-faint); font-style:italic;">
+        ${campaign.players.length - 1} other warrior${campaign.players.length !== 2 ? 's' : ''} in warband
+      </div>
+    ` : '';
+    return;
+  }
+
+  // DMs see everyone with manage buttons
+  document.getElementById('player-count').textContent = campaign.players.length;
   list.innerHTML = campaign.players.map(p => {
     const isMe = p.id === me.id;
-    const canManage = me.isDM && !isMe;
+    const canManage = !isMe;
     let actionBtns = '';
     if (canManage) {
       if (!p.isDM) {
-        actionBtns = `<button class="btn-promote" title="Promote to DM" onclick="promotePlayer(event,'${p.id}')">▲ DM</button>`;
+        actionBtns = `<button class="btn-promote" title="Promote to Jarl" onclick="promotePlayer(event,'${p.id}')">▲ Jarl</button>`;
       } else if (dmCount > 1) {
-        actionBtns = `<button class="btn-demote" title="Demote to player" onclick="demotePlayer(event,'${p.id}')">▼</button>`;
+        actionBtns = `<button class="btn-demote" title="Demote to warrior" onclick="demotePlayer(event,'${p.id}')">▼</button>`;
       }
     }
     return `
       <div class="player-tab ${p.id === viewingPlayerId ? 'active' : ''}" onclick="viewPlayer('${p.id}')">
         <div class="player-dot"></div>
         <span class="player-tab-name">${p.name}</span>
-        ${p.isDM ? '<span class="player-tab-dm">DM</span>' : ''}
+        ${p.isDM ? '<span class="player-tab-dm">Jarl</span>' : ''}
         ${actionBtns ? `<div class="player-tab-actions">${actionBtns}</div>` : ''}
       </div>
     `;
@@ -1305,6 +1350,7 @@ function renderPlayersList() {
 }
 
 function viewPlayer(playerId) {
+  if (!me.isDM && playerId !== me.id) return;
   viewingPlayerId = playerId;
   renderPlayersList();
   renderInventory();
@@ -1409,6 +1455,71 @@ function renderItemList(player) {
   `).join('');
 }
 
+function renderGround() {
+  if (!campaign) return;
+  const ground = campaign.ground || [];
+  document.getElementById('ground-count').textContent = ground.length;
+  const list = document.getElementById('ground-list');
+  const dropZone = document.getElementById('ground-drop-zone');
+
+  // Show drop zone for DMs
+  dropZone.style.display = me && me.isDM ? 'block' : 'none';
+
+  if (ground.length === 0) {
+    list.innerHTML = `<div style="color:var(--text-faint);font-style:italic;font-size:0.78rem;padding:0.5rem 0.8rem;">Nothing on the ground.</div>`;
+    return;
+  }
+
+  list.innerHTML = ground.map(item => `
+    <div class="ground-item">
+      <span class="item-list-icon">${ITEM_ICONS[item.type] || '📦'}</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:0.85rem; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.name}</div>
+        <div style="font-size:0.7rem; color:var(--text-faint);" class="r-${item.rarity}">${item.rarity}</div>
+      </div>
+      <button class="compendium-item-btn" onclick="takeFromGround('${item.id}')" title="Pick up">↑ Take</button>
+      ${me && me.isDM ? `<button class="item-list-remove" onclick="removeFromGround('${item.id}')" title="Remove">✕</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function toggleGround() {
+  const panel = document.getElementById('ground-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function takeFromGround(groundItemId) {
+  socket.emit('take_from_ground', { groundItemId });
+}
+
+function removeFromGround(groundItemId) {
+  socket.emit('remove_from_ground', { groundItemId });
+}
+
+// Ground drag-drop target (for DMs dragging from compendium)
+function setupGroundDropZone() {
+  const zone = document.getElementById('ground-drop-zone');
+  zone.addEventListener('dragover', (e) => {
+    if (!dragState || !dragState.fromCompendium) return;
+    e.preventDefault();
+    zone.style.borderColor = 'var(--ice)';
+    zone.style.color = 'var(--ice)';
+  });
+  zone.addEventListener('dragleave', () => {
+    zone.style.borderColor = '';
+    zone.style.color = '';
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.style.borderColor = '';
+    zone.style.color = '';
+    if (!dragState || !dragState.fromCompendium) return;
+    socket.emit('add_to_ground', { item: dragState.item });
+    dragState = null;
+    clearDragHighlights();
+  });
+}
+
 function renderLog() {
   if (!campaign) return;
   const list = document.getElementById('log-list');
@@ -1422,8 +1533,10 @@ function renderLog() {
 
 function renderCompendium() {
   const list = document.getElementById('compendium-list');
-  list.innerHTML = COMPENDIUM.map(item => `
-    <div class="compendium-item">
+  list.innerHTML = COMPENDIUM.map((item, idx) => `
+    <div class="compendium-item ${me && me.isDM ? 'compendium-draggable' : ''}"
+      ${me && me.isDM ? `draggable="true" ondragstart="onCompendiumDragStart(event, ${idx})"` : ''}
+      ondragend="onCompendiumDragEnd(event)">
       <span class="compendium-item-icon">${ITEM_ICONS[item.type]}</span>
       <div class="compendium-item-info">
         <div class="compendium-item-name">${item.name}</div>
@@ -1447,8 +1560,21 @@ function renderTargetSelect() {
 // ═══════════════════════════════════════════════
 // DRAG & DROP
 // ═══════════════════════════════════════════════
+function onCompendiumDragStart(e, compendiumIdx) {
+  const item = COMPENDIUM[compendiumIdx];
+  dragState = { item, fromCompendium: true, offX: 0, offY: 0 };
+  e.dataTransfer.effectAllowed = 'copy';
+  // Switch to the Armoury tab highlight
+  e.currentTarget.style.opacity = '0.5';
+}
+
+function onCompendiumDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  clearDragHighlights();
+}
+
 function onItemDragStart(e, item, ownerId) {
-  dragState = { item, ownerId, originX: item.x, originY: item.y };
+  dragState = { item, ownerId, originX: item.x, originY: item.y, fromCompendium: false };
   setTimeout(() => e.target.classList.add('dragging'), 0);
   e.dataTransfer.effectAllowed = 'move';
 
@@ -1460,24 +1586,27 @@ function onItemDragStart(e, item, ownerId) {
 
 function onCellDragOver(e) {
   e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
+  e.dataTransfer.dropEffect = dragState && dragState.fromCompendium ? 'copy' : 'move';
   clearDragHighlights();
 
   if (!dragState) return;
-  const x = parseInt(e.currentTarget.dataset.x) - dragState.offX;
-  const y = parseInt(e.currentTarget.dataset.y) - dragState.offY;
+  const x = parseInt(e.currentTarget.dataset.x) - (dragState.offX || 0);
+  const y = parseInt(e.currentTarget.dataset.y) - (dragState.offY || 0);
   const player = campaign.players.find(p => p.id === viewingPlayerId);
   if (!player) return;
   const cols = player.gridCols || 10;
   const rows = player.gridRows || 8;
 
-  // Check if valid (build temp grid without this item)
-  const tmpGrid = player.grid.map(r => [...r]);
+  // For compendium drags, check against full grid; for moves, exclude the item itself
+  let tmpGrid = player.grid.map(r => [...r]);
   const item = dragState.item;
-  for (let dy = 0; dy < (item.h||1); dy++)
-    for (let dx = 0; dx < (item.w||1); dx++)
-      if (tmpGrid[item.y+dy] && tmpGrid[item.y+dy][item.x+dx] === item.id)
-        tmpGrid[item.y+dy][item.x+dx] = null;
+
+  if (!dragState.fromCompendium) {
+    for (let dy = 0; dy < (item.h||1); dy++)
+      for (let dx = 0; dx < (item.w||1); dx++)
+        if (tmpGrid[item.y+dy] && tmpGrid[item.y+dy][item.x+dx] === item.id)
+          tmpGrid[item.y+dy][item.x+dx] = null;
+  }
 
   const valid = canPlaceLocal(tmpGrid, item, x, y, cols, rows);
 
@@ -1502,17 +1631,37 @@ function onCellDrop(e) {
   clearDragHighlights();
   if (!dragState) return;
 
-  const toX = parseInt(e.currentTarget.dataset.x) - dragState.offX;
-  const toY = parseInt(e.currentTarget.dataset.y) - dragState.offY;
+  const toX = parseInt(e.currentTarget.dataset.x) - (dragState.offX || 0);
+  const toY = parseInt(e.currentTarget.dataset.y) - (dragState.offY || 0);
 
-  document.querySelectorAll('.inv-item.dragging').forEach(el => el.classList.remove('dragging'));
-
-  socket.emit('move_item', {
-    itemId: dragState.item.id,
-    fromX: dragState.originX,
-    fromY: dragState.originY,
-    toX, toY
-  });
+  if (dragState.fromCompendium) {
+    // Drop from armoury — add item at specific position
+    const player = campaign.players.find(p => p.id === viewingPlayerId);
+    if (!player) { dragState = null; return; }
+    const cols = player.gridCols || 10;
+    const rows = player.gridRows || 8;
+    const tmpGrid = player.grid.map(r => [...r]);
+    if (!canPlaceLocal(tmpGrid, dragState.item, toX, toY, cols, rows)) {
+      toast('No space there', 'error');
+      dragState = null;
+      return;
+    }
+    socket.emit('add_item_at', {
+      targetPlayerId: viewingPlayerId,
+      item: dragState.item,
+      x: toX,
+      y: toY
+    });
+  } else {
+    // Move existing item within grid
+    document.querySelectorAll('.inv-item.dragging').forEach(el => el.classList.remove('dragging'));
+    socket.emit('move_item', {
+      itemId: dragState.item.id,
+      fromX: dragState.originX,
+      fromY: dragState.originY,
+      toX, toY
+    });
+  }
 
   dragState = null;
 }
@@ -1677,12 +1826,13 @@ function refreshDMUI() {
     document.getElementById('dm-badge-el').style.display = 'inline-block';
     document.getElementById('add-item-form').style.display = 'flex';
     document.getElementById('non-dm-msg').style.display = 'none';
-    toast('You have been promoted to Dungeon Master!', 'success');
+    toast('You have been promoted to Jarl!', 'success');
   } else {
     document.getElementById('dm-badge-el').style.display = 'none';
     document.getElementById('add-item-form').style.display = 'none';
     document.getElementById('non-dm-msg').style.display = 'block';
-    toast('You have been demoted to player.', '');
+    viewingPlayerId = me.id; // snap back to own inventory
+    toast('You have been demoted to warrior.', '');
   }
   renderCompendium();
 }
